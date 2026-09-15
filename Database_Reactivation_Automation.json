@@ -1,0 +1,905 @@
+{
+  "name": "Database Reactivation Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -1952,
+        256
+      ],
+      "id": "fa4a3c7f-f2d8-4b49-8d04-a1502dc4549f",
+      "name": "Cron - Monthly Dormancy Sweep"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.id, c.full_name, c.email, c.phone, c.segment\nFROM contacts c\nWHERE c.last_activity_at < now() - interval '90 days'\n  AND c.id NOT IN (\n      SELECT contact_id\n      FROM reactivation_campaigns\n      WHERE reactivated_at IS NOT NULL\n        AND campaign_run_at > now() - interval '90 days'\n  );",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -1728,
+        256
+      ],
+      "id": "733d2a1e-80ce-44ca-821d-6ee155df19f8",
+      "name": "Postgres - Select Dormant Contacts"
+    },
+    {
+      "parameters": {
+        "jsCode": "const validSegments = ['high_value', 'standard', 'low_engagement'];\n\nreturn $input.all().map(item => {\n  const segment = validSegments.includes(item.json.segment)\n    ? item.json.segment\n    : 'standard';\n\n  return {\n    json: {\n      ...item.json,\n      segment\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1504,
+        256
+      ],
+      "id": "10fd3fb4-4418-4541-9b1d-3a31df75e3af",
+      "name": "Code - Normalize Cohort Segment"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.segment }}",
+                    "rightValue": "high_value",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "b5682a8b-52eb-4481-9cdc-0983f910dc5b"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "High Value"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "2ec0a871-6919-437f-a7d6-b600e9fda173",
+                    "leftValue": "={{ $json.segment }}",
+                    "rightValue": "standard",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Standard"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "ff7bdcb7-e6e4-4ce1-bd79-c96f14504d7e",
+                    "leftValue": "={{ $json.segment }}",
+                    "rightValue": "low_engagement",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Low Engagement"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "a7f1344f-1186-48d2-9852-4088e2a7703e",
+                    "leftValue": "",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Unmatched"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -1280,
+        224
+      ],
+      "id": "cd35dbeb-54cd-4ffe-b24f-ff2f07e1d330",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO reactivation_campaigns (contact_id, cohort, channel)\nVALUES ($1, 'high_value', 'email')\nRETURNING id, campaign_run_at;",
+        "options": {
+          "queryReplacement": "={{ $json.id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -1056,
+        16
+      ],
+      "id": "afc0805a-8b11-4bd4-b4af-6de8622c6f02",
+      "name": "Postgres - Log High Value Attempt"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Write the re-engagement email for this contact:\n\nName: {{ $('Switch').item.json.full_name }}\nSegment: High-value past customer"
+            },
+            {
+              "role": "system",
+              "content": "=You are writing a short, personal re-engagement email on behalf of a business\nreaching out to a high-value past customer who has gone inactive. The tone\nshould be warm, direct, and respectful of their time — not salesy, not\napologetic. This person previously mattered enough to the business that\nthey're being contacted individually rather than through generic marketing.\n\nRules:\n- Keep the email under 100 words.\n- No subject line, no greeting name, no sign-off, no signature — output only\n  the body paragraph(s), nothing before or after.\n- No generic phrases like \"we miss you\" or \"just checking in.\"\n- End with a single closed-ended question the contact can answer with a\n  simple yes or no (e.g. \"Would it be worth a quick chat about that?\" —\n  not an open-ended question like \"what's been top of mind for you?\").\n- Do not invent specific past purchases, order details, or interactions —\n  reference their history only in general terms (e.g. \"it's been a while\n  since we last worked together\").\n- Output only the email body text, nothing else."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        -832,
+        16
+      ],
+      "id": "e6502d87-f8df-4168-a191-963f17a50037",
+      "name": "OpenAI - Draft High Value Outreach"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "21d98c52-f864-4f4d-8dcf-389473341353",
+              "name": "email_body",
+              "value": "={{ $json.output[0].content[0].text }}\n",
+              "type": "string"
+            },
+            {
+              "id": "4a9c6573-aabf-40b7-a63e-fbbf82ae9359",
+              "name": "recipient_email",
+              "value": "={{ $('Switch').item.json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "43a150ba-1aa2-4ae9-8840-1bac695a1ace",
+              "name": "full_name",
+              "value": "={{ $('Switch').item.json.full_name }}",
+              "type": "string"
+            },
+            {
+              "id": "8daad2a9-e2ab-4e52-8d39-1edc9646b7cc",
+              "name": "Representative",
+              "value": "=Kate Warren",
+              "type": "string"
+            },
+            {
+              "id": "685281c5-b422-45ff-99a9-cbdfe8f409d0",
+              "name": "Company",
+              "value": "Automation Agency",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -464,
+        16
+      ],
+      "id": "0063f20a-a761-430f-86cf-93b67afaa4a9",
+      "name": "Edit Fields - Prepare Email Payload"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "26c0ca85-7ffd-4312-8ffe-8915afa43503",
+              "leftValue": "=email",
+              "rightValue": "email",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -240,
+        16
+      ],
+      "id": "ca19cc64-1e6d-4517-a440-28461668b722",
+      "name": "IF - Route By Channel"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Edit Fields - Prepare Email Payload').item.json.recipient_email }}",
+        "subject": "={{ $json.full_name.split(' ')[0] }}, quick question",
+        "emailType": "text",
+        "message": "={{ $('Edit Fields - Prepare Email Payload').item.json.email_body }}\nBest Regards,\n{{ $json.Representative }}.\n{{ $json.Company }}.",
+        "options": {
+          "appendAttribution": false,
+          "replyTo": "email+reactivation@company.com"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "1858fbc2-8f7c-4299-85df-93e69fe16ae8",
+      "name": "Gmail - Send High Value Outreach",
+      "webhookId": "d6bfc6f4-cb3b-4b62-875e-b0c7a8c7ba51"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE reactivation_campaigns\nSET contacted_at = $1\nWHERE id = $2\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ $now }}\n{{ $('Postgres - Log High Value Attempt').item.json.id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        208,
+        0
+      ],
+      "id": "df6b7196-d37b-4b7a-b925-90aeed667b7a",
+      "name": "Postgres - Mark High Value Contacted"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO reactivation_campaigns (contact_id, cohort, channel)\nVALUES ($1, 'standard', 'email')\nRETURNING id, campaign_run_at;",
+        "options": {
+          "queryReplacement": "={{ $json.id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -1056,
+        240
+      ],
+      "id": "adeafe7a-17a4-4359-8f83-d10654622437",
+      "name": "Postgres - Log Standard Attempt"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Write the re-engagement email for this contact:\n\nName: {{ $('Switch').item.json.full_name }}\nSegment: Standard past customer"
+            },
+            {
+              "role": "system",
+              "content": "=You are writing a short, friendly re-engagement email on behalf of a business\nreaching out to a past customer who has gone inactive. The tone should be\ncasual, brief, and low-pressure — this is a routine touchpoint, not a\nhigh-priority outreach.\n\nRules:\n- Keep the email under 80 words.\n- No subject line, no greeting name, no sign-off, no signature — output only\n  the body paragraph(s), nothing before or after.\n- No generic phrases like \"we miss you\" or \"just checking in.\"\n- End with a single closed-ended question the contact can answer with a\n  simple yes or no.\n- Do not invent specific past purchases, order details, or interactions —\n  reference their history only in general terms.\n- Output only the email body text, nothing else."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        -832,
+        240
+      ],
+      "id": "41989891-57ac-4f6d-9630-5c7a66045de9",
+      "name": "OpenAI - Draft Standard Outreach"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "21d98c52-f864-4f4d-8dcf-389473341353",
+              "name": "email_body",
+              "value": "={{ $json.output[0].content[0].text }}\n",
+              "type": "string"
+            },
+            {
+              "id": "4a9c6573-aabf-40b7-a63e-fbbf82ae9359",
+              "name": "recipient_email",
+              "value": "={{ $('Switch').item.json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "43a150ba-1aa2-4ae9-8840-1bac695a1ace",
+              "name": "full_name",
+              "value": "={{ $('Switch').item.json.full_name }}",
+              "type": "string"
+            },
+            {
+              "id": "8daad2a9-e2ab-4e52-8d39-1edc9646b7cc",
+              "name": "Representative",
+              "value": "=Kate Warren",
+              "type": "string"
+            },
+            {
+              "id": "685281c5-b422-45ff-99a9-cbdfe8f409d0",
+              "name": "Company",
+              "value": "Automation Agency",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -464,
+        240
+      ],
+      "id": "e684fe86-20f9-490b-a50a-337b9da10b32",
+      "name": "Edit Fields - Prepare Email Payload (Standard)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "26c0ca85-7ffd-4312-8ffe-8915afa43503",
+              "leftValue": "=email",
+              "rightValue": "email",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -240,
+        240
+      ],
+      "id": "9004d219-f788-42b4-9225-aaf7173a0fc2",
+      "name": "IF - Route By Channel (Standard)"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Edit Fields - Prepare Email Payload (Standard)').item.json.recipient_email }}",
+        "subject": "={{ $json.full_name.split(' ')[0] }}, quick question",
+        "emailType": "text",
+        "message": "={{ $('Edit Fields - Prepare Email Payload (Standard)').item.json.email_body }}\nBest Regards,\n{{ $json.Representative }}.\n{{ $json.Company }}.",
+        "options": {
+          "appendAttribution": false,
+          "replyTo": "email+reactivation@company.com"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        224
+      ],
+      "id": "bf5757e6-2b9f-4166-87b6-20b6ffa46eaf",
+      "name": "Gmail - Send Standard Outreach",
+      "webhookId": "d6bfc6f4-cb3b-4b62-875e-b0c7a8c7ba51"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE reactivation_campaigns\nSET contacted_at = $1\nWHERE id = $2\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ $now }}, {{ $('Postgres - Log Standard Attempt').item.json.id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        208,
+        224
+      ],
+      "id": "f1342b72-be8d-4810-bb0c-98144d92d6e9",
+      "name": "Postgres - Mark Standard Contacted"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO reactivation_campaigns (contact_id, cohort, channel)\nVALUES ($1, 'low_engagement', 'email')\nRETURNING id, campaign_run_at;",
+        "options": {
+          "queryReplacement": "={{ $json.id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -1056,
+        464
+      ],
+      "id": "7a610055-a80d-4bd6-988f-967e406a65e6",
+      "name": "Postgres - Log Low Engagement Attempt"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Write the re-engagement email for this contact:\n\nName: {{ $('Switch').item.json.full_name }}\nSegment: Low-engagement contact"
+            },
+            {
+              "role": "system",
+              "content": "=You are writing a short, low-pressure email on behalf of a business checking\nin with a past contact who has shown little to no engagement over time. The\ngoal is not to sell or re-pitch anything — it's to check whether they'd like\nto remain in contact at all.\n\nRules:\n- Keep the email under 60 words.\n- No subject line, no greeting name, no sign-off, no signature — output only\n  the body paragraph(s), nothing before or after.\n- Do not pitch a product, service, or offer.\n- End with a single closed-ended question asking whether they'd like to\n  continue hearing from the business (yes/no).\n- Do not invent specific past purchases, order details, or interactions.\n- Output only the email body text, nothing else."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        -832,
+        464
+      ],
+      "id": "1d0bd101-c1e1-46c3-8677-a28209fd001e",
+      "name": "OpenAI - Draft Low Engagement Outreach"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "21d98c52-f864-4f4d-8dcf-389473341353",
+              "name": "email_body",
+              "value": "={{ $json.output[0].content[0].text }}\n",
+              "type": "string"
+            },
+            {
+              "id": "4a9c6573-aabf-40b7-a63e-fbbf82ae9359",
+              "name": "recipient_email",
+              "value": "={{ $('Switch').item.json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "43a150ba-1aa2-4ae9-8840-1bac695a1ace",
+              "name": "full_name",
+              "value": "={{ $('Switch').item.json.full_name }}",
+              "type": "string"
+            },
+            {
+              "id": "8daad2a9-e2ab-4e52-8d39-1edc9646b7cc",
+              "name": "Representative",
+              "value": "=Kate Warren",
+              "type": "string"
+            },
+            {
+              "id": "685281c5-b422-45ff-99a9-cbdfe8f409d0",
+              "name": "Company",
+              "value": "Automation Agency",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -464,
+        464
+      ],
+      "id": "b6cddd2b-84f8-4ef1-b036-f89e1ecc7d7e",
+      "name": "Edit Fields - Prepare Email Payload (Low Engagement)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "26c0ca85-7ffd-4312-8ffe-8915afa43503",
+              "leftValue": "=email",
+              "rightValue": "email",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -240,
+        464
+      ],
+      "id": "6124ea1b-3486-4ef6-9eaf-89bd30d12f50",
+      "name": "IF - Route By Channel (Low Engagement)"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Edit Fields - Prepare Email Payload (Low Engagement)').item.json.recipient_email }}",
+        "subject": "={{ $json.full_name.split(' ')[0] }}, quick question",
+        "emailType": "text",
+        "message": "={{ $('Edit Fields - Prepare Email Payload (Low Engagement)').item.json.email_body }}\nBest Regards,\n{{ $json.Representative }}.\n{{ $json.Company }}.",
+        "options": {
+          "appendAttribution": false,
+          "replyTo": "email+reactivation@company.com"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        448
+      ],
+      "id": "a347ec4f-0d04-4155-94e6-f9cc14d2749c",
+      "name": "Gmail - Send Low Engagement Outreach",
+      "webhookId": "d6bfc6f4-cb3b-4b62-875e-b0c7a8c7ba51"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE reactivation_campaigns\nSET contacted_at = $1\nWHERE id = $2\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ $now }}, {{ $('Postgres - Log Low Engagement Attempt').item.json.id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        208,
+        448
+      ],
+      "id": "3168a7e7-248f-42d6-93f7-4daaa4183288",
+      "name": "Postgres - Mark Low Engagement Contacted"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Cron - Monthly Dormancy Sweep": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Select Dormant Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Select Dormant Contacts": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize Cohort Segment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize Cohort Segment": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Log High Value Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres - Log Standard Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres - Log Low Engagement Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Log High Value Attempt": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Draft High Value Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Draft High Value Outreach": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields - Prepare Email Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields - Prepare Email Payload": {
+      "main": [
+        [
+          {
+            "node": "IF - Route By Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Route By Channel": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Send High Value Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Send High Value Outreach": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Mark High Value Contacted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Log Standard Attempt": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Draft Standard Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Draft Standard Outreach": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields - Prepare Email Payload (Standard)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields - Prepare Email Payload (Standard)": {
+      "main": [
+        [
+          {
+            "node": "IF - Route By Channel (Standard)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Route By Channel (Standard)": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Send Standard Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Send Standard Outreach": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Mark Standard Contacted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Log Low Engagement Attempt": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Draft Low Engagement Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Draft Low Engagement Outreach": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields - Prepare Email Payload (Low Engagement)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields - Prepare Email Payload (Low Engagement)": {
+      "main": [
+        [
+          {
+            "node": "IF - Route By Channel (Low Engagement)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Route By Channel (Low Engagement)": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Send Low Engagement Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Send Low Engagement Outreach": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Mark Low Engagement Contacted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "ee81c9fb-cc1e-47f5-8fe8-1e3d5d3d245b",
+  "meta": {
+    "instanceId": "YOUR_N8N_INSTANCE_ID"
+  },
+  "nodeGroups": [],
+  "id": "R7dKKah6zaLT9gQb",
+  "tags": []
+}

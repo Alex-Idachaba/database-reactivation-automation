@@ -1,0 +1,231 @@
+{
+  "name": "Reply-Handling - Database Reactivation Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 5,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "to:email+reactivation@company.com"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -1232,
+        16
+      ],
+      "id": "89db746b-e545-4032-a745-01794cac8e66",
+      "name": "Gmail Trigger - New Reply"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT rc.id, rc.contact_id, rc.cohort, c.full_name, c.email\nFROM reactivation_campaigns rc\nJOIN contacts c ON c.id = rc.contact_id\nWHERE c.email = $1\n  AND rc.reply_intent IS NULL\nORDER BY rc.campaign_run_at DESC\nLIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ $json.from.value[0].address }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -1008,
+        16
+      ],
+      "id": "9cb08920-1ac2-4368-99c4-c15a7e3c9c60",
+      "name": "Postgres - Find Open Campaign For Sender"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Classify this reply:\n\n{{ $('Gmail Trigger - New Reply').item.json.text }}"
+            },
+            {
+              "role": "system",
+              "content": "You are classifying a customer's email reply to a re-engagement outreach\nmessage. Read the reply and determine the customer's intent.\n\nClassify into exactly one of these four categories:\n- interested: the customer clearly wants to continue the conversation, asks\n  a question, or gives a clear affirmative signal.\n- not_interested: the customer clearly declines or indicates they don't\n  want to proceed.\n- unsubscribe: the customer explicitly asks to stop being contacted, opt\n  out, or be removed from future outreach.\n- needs_follow_up: the reply is ambiguous, noncommittal, or doesn't clearly\n  fit any of the above — for example, hedging language, uncertainty, or a\n  reply that doesn't directly address the question asked.\n\nThe reply may include quoted text from the original outreach email below\nthe new message — only classify based on the customer's own new reply text,\nignore the quoted portion.\n\nOutput only one word: interested, not_interested, unsubscribe, or\nneeds_follow_up. No punctuation, no explanation, nothing else."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        -800,
+        16
+      ],
+      "id": "42563d01-5367-40fe-8703-0afb62c64f20",
+      "name": "OpenAI - Classify Reply Intent"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE reactivation_campaigns\nSET reply_intent = $1,\n    reactivated_at = CASE WHEN $1 = 'interested' THEN now() ELSE NULL END\nWHERE id = $2\nRETURNING id, reply_intent, reactivated_at;",
+        "options": {
+          "queryReplacement": "={{ $json.output[0].content[0].text }} {{ $('Postgres - Find Open Campaign For Sender').item.json.id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -464,
+        16
+      ],
+      "id": "e764f3e3-05d7-4de2-b500-498e66a4644b",
+      "name": "Postgres - Update Reply Intent"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3cce4ef0-0084-4b5c-aee3-372a0f169b88",
+              "leftValue": "={{ $json.reply_intent }}",
+              "rightValue": "interested",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "4613e203-6171-4249-ab54-668c624a07c5",
+              "leftValue": "={{ $json.reply_intent }}",
+              "rightValue": "needs_follow_up",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -240,
+        16
+      ],
+      "id": "c0542c9c-3df6-4528-8a3d-6d5c18debb0f",
+      "name": "IF - Needs Human Attention"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#reactivation-alerts",
+          "mode": "name"
+        },
+        "text": "=*New reply needs attention*  \n\n*Contact:* {{ $('Postgres - Find Open Campaign For Sender').item.json.full_name }} \n*Email:* {{ $('Postgres - Find Open Campaign For Sender').item.json.email }} \n*Cohort:* {{ $('Postgres - Find Open Campaign For Sender').item.json.cohort }} \n*Classification:* {{ $('Postgres - Update Reply Intent').item.json.reply_intent }}  \n\n*Their reply:* \n{{ $('Gmail Trigger - New Reply').item.json.text }}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        0,
+        0
+      ],
+      "id": "4e39db25-509a-4656-9d53-2e082f1d7ec2",
+      "name": "Slack - Alert Human on Reply",
+      "webhookId": "06e604ed-6105-4b05-b4ae-1986172f4682"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger - New Reply": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Find Open Campaign For Sender",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Find Open Campaign For Sender": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Classify Reply Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Classify Reply Intent": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Update Reply Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Update Reply Intent": {
+      "main": [
+        [
+          {
+            "node": "IF - Needs Human Attention",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Needs Human Attention": {
+      "main": [
+        [
+          {
+            "node": "Slack - Alert Human on Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "b6ef2f57-faa7-43af-b8af-e4e921df6c5a",
+  "meta": {
+    "instanceId": "YOUR_N8N_INSTANCE_ID"
+  },
+  "nodeGroups": [],
+  "id": "o0IBuInv3roFWZZj",
+  "tags": []
+}
